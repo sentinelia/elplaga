@@ -1,0 +1,324 @@
+<meta charset="utf-8">
+<title>Obligatorio IA — Proyecto LOST</title>
+<style>
+  @page { size: A4; margin: 20mm 18mm; }
+  body { font-family: Georgia, 'Times New Roman', serif; font-size: 10.5pt; line-height: 1.45;
+         color: #1a1a1a; max-width: 175mm; margin: 0 auto; }
+  h1 { font-size: 17pt; margin: 0 0 2mm; }
+  h2 { font-size: 13pt; margin-top: 8mm; border-bottom: 1px solid #ccc; padding-bottom: 1mm; }
+  h3 { font-size: 11.5pt; margin-top: 6mm; }
+  .subtitle { color: #444; margin-bottom: 6mm; }
+  .cover { text-align: center; margin: 10mm 0 12mm; }
+  .cover .materia { font-size: 12pt; color: #333; }
+  table { border-collapse: collapse; margin: 3mm auto; font-size: 9.5pt; }
+  th, td { border: 1px solid #bbb; padding: 1.2mm 2.5mm; text-align: center; }
+  th { background: #f0efec; }
+  figure { margin: 4mm auto; text-align: center; page-break-inside: avoid; }
+  img { max-width: 100%; }
+  figcaption { font-size: 9pt; color: #555; margin-top: 1mm; }
+  code { font-family: 'DejaVu Sans Mono', monospace; font-size: 9pt; background: #f4f3f0; padding: 0 1px; }
+  .nota { background: #f7f6f3; border-left: 3px solid #999; padding: 2mm 4mm; font-size: 9.5pt; }
+  li { margin-bottom: 1.2mm; }
+  strong { color: #000; }
+</style>
+
+<div class="cover">
+  <div class="materia">Universidad ORT Uruguay — Facultad de Ingeniería<br>
+  Inteligencia Artificial — Obligatorio Marzo 2026</div>
+  <h1>Proyecto LOST<br><span style="font-size:12pt">Learning-based Orientation and Steering for Traversal</span></h1>
+  <div class="subtitle">Q-Learning y Dyna-Q sobre el ambiente <code>MountainCarContinuous-v0</code> (Gymnasium)</div>
+</div>
+
+<div class="nota"><strong>Alcance.</strong> Este informe cubre el Proyecto LOST (primera parte del obligatorio:
+ambiente Mountain Car Continuous). Se entrega junto con todo el código Python (<code>.py</code> y
+<code>.ipynb</code>), los modelos computados (<code>.pkl</code>) y los resultados crudos (<code>results/*.csv</code>),
+de los cuales puede trazarse cada número citado aquí.</div>
+
+<h2>1. El problema y su interacción con el simulador</h2>
+<p>El rover debe aprender, únicamente a partir de la recompensa, que avanzar suele ser mejor que no
+hacerlo. El ambiente <code>MountainCarContinuous-v0</code> tiene:</p>
+<ul>
+  <li><strong>Observación continua:</strong> posición x ∈ [−1.2, 0.6] y velocidad v ∈ [−0.07, 0.07].</li>
+  <li><strong>Acción continua:</strong> un acelerador a ∈ [−1, 1] (negativo = empujar a la izquierda).</li>
+  <li><strong>Recompensa:</strong> −0.1·a² en cada paso (costo de combustible) más +100 al alcanzar la
+      bandera en x ≥ 0.45. Los episodios se truncan a los 999 pasos.</li>
+</ul>
+<p>La interacción con el simulador sigue el ciclo estándar de Gymnasium: <code>reset()</code> entrega la
+observación inicial (posición uniforme en [−0.6, −0.4], velocidad 0) y <code>step(a)</code> devuelve
+observación, recompensa y las señales <code>terminated</code> / <code>truncated</code>. El motor es demasiado
+débil para subir directo: la única solución es <em>oscilar</em> para acumular impulso.</p>
+<p>Dos propiedades dominan todo el trabajo:</p>
+<ul>
+  <li><strong>La recompensa es dispersa:</strong> una política aleatoria alcanza la bandera en ~2% de los
+      episodios, y Q-Learning de un paso propaga el +100 hacia atrás aproximadamente una celda de la
+      grilla por cada éxito.</li>
+  <li><strong>La recompensa es engañosa:</strong> no hacer nada no cuesta nada. Hasta que el valor de la meta
+      se propaga, "quedarse quieto" es la política que maximiza el retorno: un óptimo local en el que el
+      agente puede quedar atrapado <em>permanentemente</em>, porque la política greedy deja de generar la
+      experiencia que lo corregiría.</li>
+</ul>
+
+<h2>2. Metodología de evaluación (común a todos los experimentos)</h2>
+<p>El retorno de entrenamiento es ruidoso y está contaminado por la exploración ε-greedy, por lo que
+toda configuración se evalúa de la misma manera al finalizar su entrenamiento: <strong>100 episodios con la
+política greedy</strong> (sin exploración) sobre un <strong>conjunto fijo y sembrado de estados iniciales</strong>,
+idéntico para todas las corridas. Se reporta el retorno medio, su desvío estándar y la <strong>tasa de
+éxito</strong> (fracción de episodios que alcanzan la bandera). Un episodio exitoso vale aproximadamente +90
+(100 menos el combustible); uno fallido, 0 o menos. Cada configuración de los barridos se entrena con
+<strong>2 semillas</strong> para separar el efecto de un parámetro de la suerte de una corrida. Todos los
+experimentos corrieron en un contenedor Linux de 4 núcleos; los tiempos de ejecución citados provienen de
+<code>results/*_summary.csv</code>.</p>
+
+<h2>3. Tarea 1 — Discretización de observaciones y acciones</h2>
+<p>Q-Learning tabular exige conjuntos finitos, así que ambos espacios se mapean a <strong>grillas
+uniformes</strong> (<code>discretization.py</code>): <code>np.digitize</code> sobre bordes equiespaciados de
+posición y velocidad, y <code>num_actions</code> valores de acelerador equiespaciados en [−1, 1]. La tabla Q
+tiene forma <code>(pos_bins+1, vel_bins+1, num_actions)</code>.</p>
+
+<h3>3.1 El conjunto de acciones decide todo</h3>
+<p>El primer barrido — grillas de estado de 10×10 a 100×100, todas con <strong>5 acciones</strong>,
+hiperparámetros base, 3&nbsp;000 episodios — produjo una pared de ceros: cada corrida, cada semilla, retorno
+0.0 y 0% de éxito. La política aprendida es "no hacer nada". El barrido por cantidad de acciones sobre la
+grilla 20×20 expuso la variable real (<code>discretization_summary.csv</code>):</p>
+<table>
+  <tr><th>Acciones</th><th>¿Incluye acelerador 0?</th><th>Retorno eval. (2 semillas)</th><th>Éxito</th></tr>
+  <tr><td>3, 5, 11</td><td>sí</td><td>0.0 / 0.0</td><td>0%</td></tr>
+  <tr><td>2</td><td>no</td><td>88.0 / 88.1</td><td>100%</td></tr>
+  <tr><td><strong>4</strong></td><td><strong>no</strong></td><td><strong>91.9 / 85.0</strong></td><td><strong>98–100%</strong></td></tr>
+</table>
+<p><strong>Un conjunto de acciones de tamaño impar contiene una acción "quieto" gratuita que, combinada con
+el costo de combustible, crea el óptimo local; un conjunto de tamaño par lo elimina estructuralmente:</strong>
+toda política debe moverse, el movimiento funciona además como exploración, y la trampa simplemente no
+existe. Esta única decisión de discretización logró más que cualquier hiperparámetro (§5). Cuatro acciones
+superan levemente a dos: los aceleradores ±1/3 permiten un control más barato cuando basta un empujón
+suave.</p>
+
+<figure>
+  <img src="__FIG__/fig2_discretization_actions.png" style="width: 132mm">
+  <figcaption>Fig. 2 — Curvas de aprendizaje según el tamaño del conjunto de acciones (grilla 20×20).
+  Los conjuntos impares (3, 5, 11 acciones, con acelerador 0) quedan atrapados en retorno ≈ 0 tras un
+  transitorio; los pares (2 y 4) resuelven la tarea.</figcaption>
+</figure>
+
+<h3>3.2 Resolución de la grilla de estados (sobre el conjunto de 4 acciones)</h3>
+<p>Con 4 acciones el barrido de grillas se vuelve informativo (<code>discretization_a4_summary.csv</code>):</p>
+<table>
+  <tr><th>Grilla</th><th>Estados</th><th>Retorno eval. (2 semillas)</th><th>Éxito</th><th>Pasos promedio</th></tr>
+  <tr><td>10×10</td><td>121</td><td>6.0 / 43.2</td><td>49–77%</td><td>366–617</td></tr>
+  <tr><td><strong>20×20</strong></td><td><strong>441</strong></td><td><strong>91.9 / 85.0</strong></td><td><strong>98–100%</strong></td><td><strong>159–183</strong></td></tr>
+  <tr><td>50×50</td><td>2 601</td><td>77.8 / 83.7</td><td>84–90%</td><td>328–389</td></tr>
+  <tr><td>100×100</td><td>10 201</td><td>84.3 / 91.8</td><td>92–100%</td><td>534–548</td></tr>
+</table>
+<p>El compromiso clásico se ve en ambos extremos: 10×10 sufre <em>aliasing</em> (una celda que contiene a la
+vez "moviéndose rápido a la izquierda" y "casi detenido" recibe un único valor y una única acción),
+mientras que 50×50 en adelante sigue resolviendo la tarea pero cada celda recibe muchísimos menos datos con
+el mismo presupuesto, y las políticas resultan más toscas, con trayectorias 2–3 veces más largas.
+<strong>Discretización elegida: grilla de estados 20×20 × 4 acciones</strong> (441 estados: suficientemente
+chica para visitarse a fondo, suficientemente fina para separar los estados de impulso que importan).</p>
+
+<figure>
+  <img src="__FIG__/fig1_discretization_grids.png" style="width: 132mm">
+  <figcaption>Fig. 1 — Curvas de aprendizaje según la resolución de la grilla de estados (4 acciones).
+  La grilla 100×100 aprende visiblemente más lento por la escasez de datos por celda.</figcaption>
+</figure>
+
+<h2>4. Tarea 2 — Técnica: Q-Learning</h2>
+<p><code>q_learning_agent.py</code> implementa Q-Learning de un paso (control TD off-policy, Sutton &amp;
+Barto §6.5):</p>
+<p style="text-align:center"><em>Q(S,A) ← Q(S,A) + α·[R + γ·max<sub>a</sub> Q(S′,a) − Q(S,A)]</em></p>
+<p>con exploración <strong>ε-greedy</strong>: ε parte de 1.0 (la meta solo puede descubrirse por azar, así que
+el inicio del entrenamiento debe ser casi totalmente aleatorio) y decae multiplicativamente por episodio
+hasta un piso <code>epsilon_min</code>. En la terminación verdadera (meta alcanzada) se elimina el término de
+<em>bootstrap</em> — el valor de un estado terminal es 0 por definición —; en el truncamiento a 999 pasos se
+mantiene, porque el límite de tiempo no es un estado terminal real del problema. Los agentes se guardan y
+cargan como tablas Q serializadas (<code>models/*.pkl</code>).</p>
+
+<h2>5. Tarea 3 — Exploración de hiperparámetros</h2>
+<p><strong>Estrategia.</strong> Una grilla completa sobre cinco parámetros es inabordable, de modo que se barrió
+<strong>un parámetro por vez alrededor de una configuración base</strong> (búsqueda por coordenadas):
+α ∈ {0.05, 0.1*, 0.2, 0.5}, γ ∈ {0.9, 0.99*, 0.999, 1.0}, decaimiento de ε ∈ {0.997, 0.999*, 0.9995} y piso
+de ε ∈ {0.0, 0.05*, 0.2} (* = valor base), con 2 semillas por punto, 3&nbsp;000 episodios, y la evaluación de §2
+como criterio de comparación.</p>
+<p><strong>Sobre la discretización de 5 acciones</strong> (<code>hyperparams_summary.csv</code>) el barrido es casi
+uniformemente cero: ningún valor de α, γ ni del esquema de ε escapa de manera confiable de la trampa del
+"quieto" en 3&nbsp;000 episodios. La única excepción es reveladora: α = 0.5 escapó en una semilla (83.5) y falló
+en la otra (0.0) — una tasa de aprendizaje grande permite que un único éxito afortunado redirija la política
+greedy, pero es una moneda al aire, no un método. Una corrida más larga (α = 0.5, piso de ε 0.2, 8&nbsp;000
+episodios) sí escapa de forma confiable; ver el tercer modelo final (§7).</p>
+<p><strong>Sobre la discretización elegida de 4 acciones</strong> (<code>hyperparams_a4_summary.csv</code>, Fig. 3)
+las diferencias se vuelven medibles y consistentes entre semillas:</p>
+<table>
+  <tr><th>Parámetro</th><th>Valores (retorno medio de eval., 2 semillas)</th><th>Lectura</th></tr>
+  <tr><td>α</td><td>0.05: 89.0 · 0.1: 88.5 · <strong>0.2: 92.5</strong> · 0.5: 85.3</td>
+      <td>0.2 es el mejor; con 0.5 los valores no terminan de asentarse</td></tr>
+  <tr><td>γ</td><td><strong>0.9: 75.4</strong> · 0.99: 88.5 · 0.999: 90.4 · 1.0: 91.3</td>
+      <td>0.9 vuelve casi invisible el +100 lejano (0.9¹⁵⁰ ≈ 10⁻⁷); ≥ 0.99 son equivalentes</td></tr>
+  <tr><td>decaimiento de ε</td><td>0.997: 90.1 · 0.999: 88.5 · 0.9995: 90.0</td><td>despreciable</td></tr>
+  <tr><td>piso de ε</td><td>0.0: 88.5 · 0.05: 88.5 · 0.2: 88.0</td>
+      <td>despreciable: el movimiento forzado ya explora</td></tr>
+</table>
+<p><strong>Elección final: α = 0.2, γ = 0.99, ε: 1.0 → 0.05 con decaimiento 0.999</strong>, sobre la
+discretización 20×20 × 4 acciones. La lección general: en este problema la <em>representación</em> (el
+conjunto de acciones) importó mucho más que cualquier ajuste fino; los hiperparámetros solo modulan la
+velocidad una vez que la tarea es resoluble.</p>
+
+<figure>
+  <img src="__FIG__/fig3_hyperparams.png" style="width: 150mm">
+  <figcaption>Fig. 3 — Barridos de hiperparámetros alrededor de la configuración base sobre la
+  discretización elegida (barras: retorno medio de evaluación; segmentos: desvío entre semillas).</figcaption>
+</figure>
+
+<h2>6. Tarea 4 — Componente de investigación: Dyna-Q (Sutton &amp; Barto, §8.1–8.2)</h2>
+<p>Las secciones 8.1–8.2 introducen la idea de que un <strong>modelo</strong> del ambiente puede aprenderse junto
+con la función de valor y usarse para <strong>planificar</strong>: repetir la misma actualización de Q-Learning
+sobre experiencia simulada. El Dyna-Q tabular (algoritmo del recuadro, p. 164) hace, en cada paso real:</p>
+<ul>
+  <li><strong>(d) RL directo:</strong> la actualización ordinaria de Q-Learning con la transición real.</li>
+  <li><strong>(e) Aprendizaje del modelo:</strong> almacenar <code>Model(S,A) ← (R, S′)</code>. Como la dinámica
+      del Mountain Car es determinista, recordar el último resultado hace al modelo <em>exacto</em> para todo
+      par visitado.</li>
+  <li><strong>(f) Planificación:</strong> repetir <em>n</em> veces: muestrear uniformemente un par (S,A) ya
+      visitado, recuperar (R, S′) del modelo y aplicarle la misma actualización de Q-Learning.</li>
+</ul>
+<p><code>dyna_q_agent.py</code> se implementa como subclase del agente de Q-Learning agregando solo (e) y (f),
+de modo que la comparación es exactamente uno-a-uno. El experimento da a cada agente el mismo presupuesto
+reducido de <strong>600 episodios reales sobre la discretización de 5 acciones</strong> — deliberadamente el
+escenario donde Q-Learning puro queda atrapado — con n ∈ {0, 5, 20, 50}
+(<code>dynaq_summary.csv</code>, Figs. 4–5):</p>
+<table>
+  <tr><th>Agente</th><th>Retorno eval. (2 semillas)</th><th>Éxito</th><th>Tiempo de entrenamiento</th></tr>
+  <tr><td>Q-Learning / Dyna-Q n=0</td><td>0.0 / 0.0</td><td>0%</td><td>10–14 s</td></tr>
+  <tr><td><strong>Dyna-Q n=5</strong></td><td><strong>81.6 / 86.1</strong></td><td><strong>95–100%</strong></td><td>25 s</td></tr>
+  <tr><td>Dyna-Q n=20</td><td>55.5 / 61.1</td><td>72–86%</td><td>58 s</td></tr>
+  <tr><td>Dyna-Q n=50</td><td>−27.9 / −27.9</td><td>0%</td><td>128 s</td></tr>
+</table>
+<p>Tres hallazgos:</p>
+<ol>
+  <li><strong>n=0 reproduce exactamente a Q-Learning puro</strong> — la maquinaria de Dyna en sí no cambia
+      nada; verificación de sanidad superada.</li>
+  <li><strong>n=5 resuelve, en 600 episodios, la configuración en la que Q-Learning puro falló con 5 veces ese
+      presupuesto</strong> — incluso con la acción "quieto" disponible. Es la imagen de §8.2 del libro
+      reproducida en un ambiente más difícil: cada éxito raro es repetido cientos de veces por la
+      planificación, y el +100 barre la tabla en lugar de arrastrarse una celda por éxito.</li>
+  <li><strong>Más planificación no es mejor: n=50 es catastrófico.</strong> La planificación muestrea
+      uniformemente de <em>toda</em> la experiencia vista, y antes del primer éxito esa experiencia contiene
+      solo los costos de combustible −0.1·a². Con n=50 esos costos se martillan en la tabla ~50 veces más
+      rápido de lo que el comportamiento ε-greedy tarda en tropezar con la meta: todas las acciones de
+      movimiento se vuelven profundamente negativas, el componente greedy deja de moverse, la meta no se
+      encuentra nunca, y la política final (−27.9 en ambas semillas) quema combustible en un vaivén inútil.
+      n=20 queda a mitad de camino. Esta es precisamente la debilidad del muestreo uniforme con la que Sutton
+      &amp; Barto motivan el <em>prioritized sweeping</em> (§8.4): repetir las transiciones cuyos valores
+      acaban de cambiar, no transiciones al azar.</li>
+</ol>
+<p>El tiempo de pared crece aproximadamente lineal con n, como se espera: la planificación compra eficiencia
+de muestras con cómputo. El tipo de cambio es excelente en n=5 (2.5× el tiempo de Q-Learning puro, mejora
+infinita del resultado) y ruinoso en n=50.</p>
+
+<figure>
+  <img src="__FIG__/fig4_dynaq_curves.png" style="width: 132mm">
+  <figcaption>Fig. 4 — Curvas de aprendizaje de Dyna-Q según el presupuesto de planificación, con el mismo
+  presupuesto de 600 episodios reales.</figcaption>
+</figure>
+<figure>
+  <img src="__FIG__/fig5_dynaq_tradeoff.png" style="width: 150mm">
+  <figcaption>Fig. 5 — Retorno de evaluación y tiempo de entrenamiento según los pasos de planificación:
+  la eficiencia de muestras se paga con cómputo, y el óptimo está en valores bajos de n.</figcaption>
+</figure>
+
+<h2>7. Modelos finales entregados y resultados</h2>
+<p>Se entregan tres modelos computados en <code>models/</code> (tablas Q serializadas junto con su
+discretización), todos entrenados y evaluados con el protocolo de §2 (<code>final_summary.csv</code>):</p>
+<table>
+  <tr><th>Modelo</th><th>Configuración</th><th>Episodios</th><th>Retorno eval.</th><th>Éxito</th><th>Tiempo</th></tr>
+  <tr><td><code>final_qlearning.pkl</code></td><td>20×20 × 4 acc., α=0.2, γ=0.99</td><td>10 000</td>
+      <td><strong>93.4 ± 0.2</strong></td><td><strong>100%</strong></td><td>39 s</td></tr>
+  <tr><td><code>final_dynaq_n5.pkl</code></td><td>20×20 × 5 acc., n=5, α=0.1</td><td>1 000</td>
+      <td>77.6 ± 15.8</td><td>99%</td><td>35 s</td></tr>
+  <tr><td><code>final_qlearning_5actions.pkl</code></td><td>20×20 × 5 acc., α=0.5, piso ε 0.2</td><td>8 000</td>
+      <td>87.2 ± 26.8</td><td>98%</td><td>56 s</td></tr>
+</table>
+<p><code>final_qlearning.pkl</code> es <strong>el modelo computado principal de la entrega</strong> (requisito
+obligatorio del ejercicio 1): verificado además sobre 20 episodios con semillas nunca vistas, obtiene
+retorno medio 93.3 ± 0.2, 100% de éxito y soluciones de ~78 pasos. El segundo modelo muestra a Dyna-Q
+rescatando la configuración condenada, y el tercero documenta que la trampa del "quieto" es escapable sin
+cambiar el conjunto de acciones, pagando α agresivo, exploración sostenida y 8 000 episodios.</p>
+
+<figure>
+  <img src="__FIG__/fig6_final_learning_curves.png" style="width: 165mm">
+  <figcaption>Fig. 6 — Curvas de entrenamiento de los tres modelos finales (media móvil de 100 episodios).</figcaption>
+</figure>
+
+<h3>7.1 ¿Qué aprendió efectivamente el agente?</h3>
+<figure>
+  <img src="__FIG__/fig7_policy_value.png" style="width: 165mm">
+  <figcaption>Fig. 7 — Izquierda: función de valor aprendida max<sub>a</sub> Q(s,a); las celdas grises nunca
+  fueron visitadas. Derecha: política greedy (azul = empujar a la izquierda, rojo = a la derecha).</figcaption>
+</figure>
+<p>Los dos paneles muestran que el agente entendió la física del problema. El valor es máximo justo a la
+izquierda de la bandera con velocidad positiva y a lo largo del "corredor de impulso" (el extremo izquierdo
+con velocidad también es valioso: una pasada por la pendiente izquierda catapulta al auto hacia la meta). La
+política es un <strong>controlador bang-bang organizado por la velocidad</strong>: moviéndose a la derecha
+(mitad superior) → empujar a la derecha; moviéndose a la izquierda (mitad inferior) → empujar a la
+izquierda. Es decir, empujar siempre <em>a favor</em> de la velocidad actual para bombear energía a la
+oscilación — exactamente la estrategia de resonancia que la tarea exige.</p>
+
+<h2>8. Conclusiones</h2>
+<ol>
+  <li><strong>La discretización fue la decisión de diseño decisiva, no la regla de aprendizaje.</strong> La
+      paridad del conjunto de acciones esconde una semántica (una acción "quieto" gratuita) que, combinada
+      con el costo de combustible, crea un óptimo local del que Q-Learning tabular no escapa de forma
+      confiable en miles de episodios. Un conjunto par lo elimina estructuralmente; 20×20 equilibra el
+      aliasing contra los datos por celda.</li>
+  <li><strong>Con la representación correcta, Q-Learning resuelve la tarea con solvencia:</strong> ~93 de
+      retorno, 100% de éxito sobre estados iniciales no vistos, soluciones de ~78 pasos y una política
+      físicamente interpretable.</li>
+  <li><strong>Los hiperparámetros importaron menos que la representación:</strong> solo α (mejor 0.2) y γ
+      (necesariamente ≥ 0.99) tuvieron efectos visibles; el esquema de ε fue casi irrelevante.</li>
+  <li><strong>Dyna-Q cumplió su promesa de libro — con la advertencia que el propio libro predice.</strong>
+      n=5 pasos de planificación resolvieron con 5 veces menos episodios la configuración en la que
+      Q-Learning puro falla; pero planificar uniformemente sobre experiencia que solo contiene costos es
+      veneno en ambientes de recompensa engañosa (n=50 falla por completo), que es exactamente la motivación
+      del prioritized sweeping (§8.4).</li>
+</ol>
+
+<h2>9. Notas de advertencia</h2>
+<ul>
+  <li>Los barridos usaron <strong>2 semillas por configuración</strong> (presupuesto de cómputo): los números
+      individuales cargan algunos puntos de ruido de semilla, aunque todas las conclusiones cualitativas
+      (acciones pares vs. impares, la curva de n en Dyna-Q, el fracaso de γ = 0.9) son consistentes entre
+      semillas.</li>
+  <li>El truncamiento a 999 pasos se trata como <strong>no terminal</strong> en todas las actualizaciones (se
+      mantiene el bootstrap), que es el manejo correcto de los límites de tiempo.</li>
+  <li><strong>No se usó reward shaping en ningún experimento:</strong> todos los resultados son sobre la
+      recompensa propia del ambiente.</li>
+  <li>La reproducción completa de los experimentos (<code>python experiments.py &lt;suite&gt;</code>) toma
+      ~45 minutos en 4 núcleos; todas las corridas están sembradas.</li>
+</ul>
+
+<h2>10. Declaración de uso de Inteligencia Artificial Generativa</h2>
+<p><strong>Herramienta utilizada:</strong> Claude (Anthropic), en su modalidad de asistente de programación
+(Claude Code).</p>
+<p><strong>Contexto de uso:</strong> asistencia en la escritura del código de los agentes y del arnés de
+experimentos a partir de las técnicas especificadas en la letra (Q-Learning según Sutton &amp; Barto §6.5;
+Dyna-Q según §8.1–8.2), ejecución de los experimentos, generación de los gráficos y redacción inicial del
+informe. Todos los algoritmos siguen el material citado del curso; todos los resultados provienen de
+ejecutar realmente el código entregado (los CSV crudos en <code>results/</code> permiten verificar cada
+número), y el contenido fue revisado y verificado contra dichos datos.</p>
+
+<h2>Anexo — Estructura del código entregado y reproducción</h2>
+<table style="font-size: 9pt">
+  <tr><th style="text-align:left">Archivo</th><th style="text-align:left">Contenido</th></tr>
+  <tr><td style="text-align:left"><code>discretization.py</code></td><td style="text-align:left">Discretizador de grilla uniforme para estados y acciones</td></tr>
+  <tr><td style="text-align:left"><code>q_learning_agent.py</code></td><td style="text-align:left">Agente de Q-Learning tabular (entrenar / evaluar / guardar / cargar)</td></tr>
+  <tr><td style="text-align:left"><code>dyna_q_agent.py</code></td><td style="text-align:left">Agente Dyna-Q (Q-Learning + modelo aprendido + planificación)</td></tr>
+  <tr><td style="text-align:left"><code>experiments.py</code></td><td style="text-align:left">Suites de experimentos: <code>discretization</code>, <code>discretization_a4</code>, <code>hyperparams</code>, <code>hyperparams_a4</code>, <code>dynaq</code>, <code>final</code></td></tr>
+  <tr><td style="text-align:left"><code>make_plots.py</code></td><td style="text-align:left">Regenera todas las figuras (<code>--lang es</code> para las versiones en español)</td></tr>
+  <tr><td style="text-align:left"><code>continuous_mountain_car.ipynb</code></td><td style="text-align:left">Notebook que recorre todo el proyecto, con resultados ejecutados</td></tr>
+  <tr><td style="text-align:left"><code>models/*.pkl</code></td><td style="text-align:left">Modelos computados (tablas Q con su discretización)</td></tr>
+  <tr><td style="text-align:left"><code>results/*.csv</code>, <code>*.png</code></td><td style="text-align:left">Resumen por corrida, historias por episodio y figuras</td></tr>
+</table>
+<p>El ambiente se gestiona con <strong>Poetry</strong> tal como fue entregado
+(<code>poetry install</code> con el <code>pyproject.toml</code> / <code>poetry.lock</code> del curso;
+alternativa: <code>pip install numpy gymnasium matplotlib</code>). Para usar un modelo entrenado:</p>
+<p><code>agent = QLearningAgent.load("models/final_qlearning.pkl")</code> y luego
+<code>agent.test_agent(gym.make("MountainCarContinuous-v0"), episodes=10)</code>.</p>
