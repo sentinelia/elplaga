@@ -129,15 +129,20 @@ def bars_figure(ax, labels, values, errs, color, title, highlight=None):
 
 
 def fig_discretization():
-    rows = read_summary("discretization")
-    grid_rows = [r for r in rows if r["num_actions"] == "5"]
-    by_grid = grouped(grid_rows, lambda r: f"{r['position_bins']}x{r['velocity_bins']}")
+    # Grid-resolution sweep on the solvable 4-action set (the 5-action sweep
+    # is uniformly stuck at 0 and cannot discriminate resolutions).
+    rows4 = read_summary("discretization_a4")
+    by_grid = grouped(rows4, lambda r: f"{r['position_bins']}x{r['velocity_bins']}")
     curves_figure(
         [(f"{k} grid", [r["run_id"] for r in v]) for k, v in by_grid.items()],
-        "State-grid resolution (5 actions, mean of 2 seeds)",
+        "State-grid resolution (4 actions, mean of 2 seeds)",
         "fig1_discretization_grids.png",
     )
+    # Action-count sweep at 20x20: odd counts (with a 0-throttle action) vs
+    # even counts (without). The 4-action runs come from the a4 grid sweep.
+    rows = read_summary("discretization")
     act_rows = [r for r in rows if f"{r['position_bins']}x{r['velocity_bins']}" == "20x20"]
+    act_rows += [r for r in rows4 if f"{r['position_bins']}x{r['velocity_bins']}" == "20x20"]
     by_act = grouped(act_rows, lambda r: int(r["num_actions"]))
     curves_figure(
         [(f"{k} actions", [r["run_id"] for r in v]) for k, v in sorted(by_act.items())],
@@ -147,8 +152,10 @@ def fig_discretization():
 
 
 def fig_hyperparams():
-    rows = read_summary("hyperparams")
-    base = [r for r in rows if r["run_id"].startswith("hp_base")]
+    # The sweeps on the chosen (4-action) discretization; the 5-action sweep
+    # is shown as a table in the notebook/report instead (nearly all zeros).
+    rows = read_summary("hyperparams_a4")
+    base = [r for r in rows if r["run_id"].startswith("hp4_base")]
     base_reward = np.mean([float(r["eval_mean_reward"]) for r in base])
 
     sweeps = {
@@ -159,7 +166,7 @@ def fig_hyperparams():
     }
     fig, axes = plt.subplots(2, 2, figsize=(9, 6))
     for ax, (param, (title, base_val)) in zip(axes.flat, sweeps.items()):
-        swept = [r for r in rows if r["run_id"].startswith(f"hp_{param}")]
+        swept = [r for r in rows if r["run_id"].startswith(f"hp4_{param}")]
         by_val = grouped(swept, lambda r: r[param])
         labels, values, errs = [f"{base_val}*"], [base_reward], [
             np.std([float(r["eval_mean_reward"]) for r in base])

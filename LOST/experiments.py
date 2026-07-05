@@ -165,6 +165,27 @@ def suite_hyperparams():
     write_summary("hyperparams", rows)
 
 
+def suite_discretization_a4():
+    """State-grid sweep on the 4-action set.
+
+    With 5 actions every grid resolution collapses into the do-nothing local
+    optimum (all rows of discretization_summary.csv score 0), so that sweep
+    says nothing about resolution. On the solvable 4-action set the effect of
+    the state grid becomes visible.
+    """
+    rows = []
+    for px, vx in [(10, 10), (20, 20), (50, 50), (100, 100)]:
+        for seed in SEEDS:
+            rid = f"disc4_grid{px}x{vx}_a4_s{seed}"
+            rows.append(
+                run_one(
+                    rid,
+                    {"position_bins": px, "velocity_bins": vx, "num_actions": 4, "seed": seed},
+                )
+            )
+    write_summary("discretization_a4", rows)
+
+
 def suite_hyperparams_a4():
     """Same coordinate-wise sweeps, on the chosen 4-action discretization.
 
@@ -229,6 +250,7 @@ def suite_final():
 
 SUITES = {
     "discretization": suite_discretization,
+    "discretization_a4": suite_discretization_a4,
     "hyperparams": suite_hyperparams,
     "hyperparams_a4": suite_hyperparams_a4,
     "dynaq": suite_dynaq,
