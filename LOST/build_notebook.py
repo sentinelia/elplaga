@@ -151,7 +151,40 @@ display(Image("results/fig1_discretization_grids.png"))
 display(Image("results/fig2_discretization_actions.png"))
 """)
 
-md("__DISCRETIZATION_ANALYSIS__")
+md(r"""
+### Analysis — the action set decides everything
+
+The first sweep (state grids at **5 actions**) produced a wall of zeros: every
+grid resolution, every seed, evaluation return 0.0 and success rate 0.00. The
+learned policy is *"do nothing"*. This is the deceptive-reward trap described
+above: the 0-throttle action costs nothing, random exploration reaches the flag
+in only ~2% of episodes, and a one-step backup drags the +100 backwards a single
+cell per success — far too slowly for 3 000 episodes. When learning collapses
+like this, grid resolution is irrelevant, so the grid study says nothing yet.
+
+The **action-count sweep** exposes the real variable. Counts are either odd
+(3, 5, 11 — the set contains throttle 0) or even (2, 4 — it does not):
+
+- **Odd counts: 0.0 return, 0% success**, every run, every seed.
+- **Even counts: solved.** 2 actions ≈ 88 return / 100% success; 4 actions ≈ 85–92 / 98–100%.
+
+Removing the idle action removes the local optimum *structurally*: every policy
+must move, so the car cannot converge to standing still, and constant motion
+doubles as exploration. This single discretization decision does what no
+hyperparameter below manages reliably. 4 actions beats 2 slightly because the
+±1/3 throttles let the agent spend less fuel when a gentle push suffices.
+
+With a solvable action set (4 actions), the **grid sweep** becomes informative
+and shows the classic resolution trade-off:
+
+- **10×10** — heavy aliasing: 6–43 return, 49–77% success. Cells lump together states that need opposite actions.
+- **20×20** — best: 85–92 return, 98–100% success, and the fastest solutions (~160–180 steps).
+- **50×50 / 100×100** — still solved (78–92 return) but with visibly slower, cruder trajectories (up to ~550 steps at 100×100): with 40× more cells, each cell gets 40× less data in the same 3 000 episodes, so the policy is far from refined.
+
+**Chosen discretization: 20×20 state grid × 4 actions** (441 states — small
+enough to visit thoroughly, fine enough to separate the momentum states that
+matter).
+""")
 
 md(r"""
 ## Task 3 — Hyperparameter exploration (`experiments.py hyperparams`)
@@ -170,7 +203,28 @@ show_csv("results/hyperparams_summary.csv",
 display(Image("results/fig3_hyperparams.png"))
 """)
 
-md("__HYPERPARAMS_ANALYSIS__")
+md(r"""
+### Analysis
+
+**On the 5-action discretization** (`hyperparams_summary.csv`, first table) the
+sweep is almost uniformly zero — no learning rate, discount, or epsilon schedule
+rescues the idle trap within 3 000 episodes. The one exception is instructive:
+α = 0.5 escaped on one seed (83.5) and failed on the other (0.0). A large
+learning rate lets a single lucky success move Q-values enough to redirect the
+greedy policy, but it is a coin flip, not a method. (A separate probe confirmed
+that α = 0.5 with a 0.2 epsilon floor and 8 000 episodes escapes reliably — see
+the final models below — so the trap is escapable, just expensive.)
+
+**On the chosen 4-action discretization** (`hyperparams_a4` runs, figure above)
+the differences become measurable and consistent across seeds:
+
+- **α (learning rate):** 0.2 is best (92.5 mean; 92.6/92.4 per seed). 0.05–0.1 are slightly behind (88.5–89.0), and 0.5 starts to hurt (85.3) — updates so large that values keep sloshing.
+- **γ (discount):** the one parameter with a clear failure mode. γ = 0.9 drops to 75.4: the +100 is ~150 steps away at first, and $0.9^{150} \approx 10^{-7}$ makes the goal nearly invisible from the start states. γ ∈ {0.99, 0.999, 1.0} are equivalent here (88.5–91.3); we keep the conventional 0.99.
+- **ε schedule (decay, floor):** barely matters on this discretization (88.0–90.1 everywhere) because forced motion already explores; the schedule only tunes how quickly the return curve climbs.
+
+**Final choice: α = 0.2, γ = 0.99, ε: 1.0 → 0.05 with decay 0.999**, on the
+20×20 × 4-action discretization.
+""")
 
 md(r"""
 ## Task 4 — Research component: Dyna-Q (Sutton & Barto §8.1–8.2)
@@ -205,7 +259,30 @@ display(Image("results/fig4_dynaq_curves.png"))
 display(Image("results/fig5_dynaq_tradeoff.png"))
 """)
 
-md("__DYNAQ_ANALYSIS__")
+md(r"""
+### Analysis
+
+The suite deliberately runs on the **5-action** discretization — the one where
+plain Q-Learning is trapped — because that is where planning has something to
+prove. Results after 600 real episodes (2 seeds):
+
+| Agent | Eval return | Success | Wall-clock |
+|---|---|---|---|
+| Q-Learning (and Dyna-Q n=0) | 0.0 | 0% | ~10–14 s |
+| Dyna-Q **n=5** | **81.6 / 86.1** | **95–100%** | ~25 s |
+| Dyna-Q n=20 | 55.5 / 61.1 | 72–86% | ~58 s |
+| Dyna-Q n=50 | −27.9 / −27.9 | 0% | ~128 s |
+
+Three observations:
+
+1. **n=0 reproduces plain Q-Learning exactly** — the Dyna machinery itself changes nothing; sanity check passed.
+2. **n=5 solves, in 600 episodes, the task plain Q-Learning failed in 3 000** — with an idle action available and everything. This is the textbook picture from §8.2: each rare success is replayed hundreds of times by planning, so the +100 sweeps through the table instead of crawling one cell per success.
+3. **More planning is not monotonically better — n=50 is catastrophic.** Planning replays are sampled uniformly from *all* transitions seen so far, and before the first success those transitions contain only the −0.1a² fuel costs. At n=50 those costs are hammered into the table ~50× faster than the ε-greedy behaviour can stumble onto the goal, so every "move" action goes deeply negative first, the greedy component stops moving, the goal is never found — and the final policy (−27.9 on both seeds) burns fuel in a futile shuffle. n=20 sits halfway. This is precisely the weakness of uniform sample selection that Sutton & Barto motivate **prioritized sweeping (§8.4)** with: replay the transitions whose values just changed, not random ones.
+
+Wall-clock grows roughly linearly with n, as expected — planning buys sample
+efficiency with compute. Here the exchange rate is excellent at n=5 (2.5× the
+time of plain Q-Learning, infinite improvement in outcome) and ruinous at n=50.
+""")
 
 md(r"""
 ## Final models (`experiments.py final`)
@@ -244,9 +321,27 @@ code("""
 display(Image("results/fig7_policy_value.png"))
 """)
 
-md("__POLICY_ANALYSIS__")
+md(r"""
+The two panels show the agent understood the physics:
 
-md("__CONCLUSIONS__")
+- **Value (left):** highest just left of the flag with rightward velocity, and along the "momentum corridor" — far left with any speed is also valuable, because a swing from the left slope carries the car up the right one. Near-zero regions were rarely or never visited (masked cells were never updated).
+- **Policy (right):** an approximate **bang-bang controller organized by velocity**: moving right (upper half) → push right (red), moving left (lower half) → push left (blue), i.e. always push *with* the current velocity to pump energy into the oscillation — exactly the resonance strategy the problem demands. The rough diagonal boundary is where the agent flips throttle to turn a leftward swing into a rightward launch.
+""")
+
+md(r"""
+## Conclusions
+
+1. **Discretization was the decisive design choice, not the learning rule.** Uniform grids work, but the *action* discretization carries a hidden semantic: any odd-sized set contains a free "do nothing" action, which combined with the −0.1a² fuel cost creates a local optimum that tabular Q-Learning cannot reliably escape in thousands of episodes. An even action set (no idle) removes the trap structurally. 20×20 × 4 actions balances aliasing against data-per-cell.
+2. **Q-Learning solves the task once the representation is right:** ~92 mean return, ~100% success over 100 held-out greedy episodes, solutions of ~150 steps — and the greedy policy is a physically sensible bang-bang momentum controller.
+3. **Hyperparameters mattered less than representation.** α = 0.2 and γ ≥ 0.99 are the only settings with visible effect; the epsilon schedule is nearly irrelevant once motion is forced. The task's difficulty lives in exploration/credit assignment, not in tuning.
+4. **Dyna-Q (§8.1–8.2) delivers its textbook promise — with a caveat the textbook also predicts.** n=5 planning steps solved, in 600 episodes, the exact configuration plain Q-Learning failed at with 5× the budget; but uniform planning over cost-only experience is poison in deceptive-reward environments (n=50 fails outright), which is the very motivation for prioritized sweeping (§8.4).
+
+**Warning notes.** Results are from 2 seeds per configuration (compute budget);
+individual numbers carry seed noise of a few return points, though every
+qualitative conclusion (odd vs. even actions, the Dyna-Q n curve, γ = 0.9) is
+consistent across seeds. The 999-step truncation is treated as non-terminal in
+the update (we still bootstrap), which is the correct handling for time limits.
+""")
 
 if __name__ == "__main__":
     import sys

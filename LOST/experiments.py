@@ -230,18 +230,34 @@ def suite_dynaq():
 
 
 def suite_final():
+    """Final models with the configuration chosen from the sweeps.
+
+    Chosen discretization: 20x20 state grid, 4 actions (no 0-throttle action).
+    Chosen hyperparameters: alpha=0.2, gamma=0.99, epsilon 1.0 -> 0.05 with
+    decay 0.999 (best coordinate-wise results in hyperparams_a4_summary.csv).
+    The third run documents that the 5-action idle trap is escapable, at the
+    cost of a much larger budget and aggressive exploration.
+    """
+    best = {"num_actions": 4, "alpha": 0.2, "gamma": 0.99, "seed": 0}
     rows = []
+    rows.append(run_one("final_qlearning", {**best, "episodes": 5000}, save_model=True))
     rows.append(
         run_one(
-            "final_qlearning",
-            {"episodes": 5000, "seed": 0},
+            "final_dynaq_n5",
+            {**best, "planning_steps": 5, "episodes": 1000},
             save_model=True,
         )
     )
     rows.append(
         run_one(
-            "final_dynaq_n20",
-            {"planning_steps": 20, "episodes": 1500, "seed": 0},
+            "final_qlearning_5actions",
+            {
+                "num_actions": 5,
+                "alpha": 0.5,
+                "epsilon_min": 0.2,
+                "episodes": 8000,
+                "seed": 0,
+            },
             save_model=True,
         )
     )
