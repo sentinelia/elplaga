@@ -165,6 +165,31 @@ def suite_hyperparams():
     write_summary("hyperparams", rows)
 
 
+def suite_hyperparams_a4():
+    """Same coordinate-wise sweeps, on the chosen 4-action discretization.
+
+    On the 5-action grid every configuration collapses into the do-nothing
+    local optimum (see hyperparams_summary.csv), so that sweep cannot
+    discriminate between hyperparameters. Repeating it on the 20x20 / 4-action
+    discretization, where the task is solvable, makes the differences visible.
+    """
+    rows = []
+    sweeps = {
+        "alpha": [0.05, 0.2, 0.5],
+        "gamma": [0.9, 0.999, 1.0],
+        "epsilon_decay": [0.997, 0.9995],
+        "epsilon_min": [0.0, 0.2],
+    }
+    for seed in SEEDS:
+        rows.append(run_one(f"hp4_base_s{seed}", {"num_actions": 4, "seed": seed}))
+    for param, values in sweeps.items():
+        for value in values:
+            for seed in SEEDS:
+                rid = f"hp4_{param}{value}_s{seed}"
+                rows.append(run_one(rid, {"num_actions": 4, param: value, "seed": seed}))
+    write_summary("hyperparams_a4", rows)
+
+
 def suite_dynaq():
     rows = []
     # Reduced episode budget: the point is sample efficiency.
@@ -205,6 +230,7 @@ def suite_final():
 SUITES = {
     "discretization": suite_discretization,
     "hyperparams": suite_hyperparams,
+    "hyperparams_a4": suite_hyperparams_a4,
     "dynaq": suite_dynaq,
     "final": suite_final,
 }
