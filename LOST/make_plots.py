@@ -86,18 +86,23 @@ def mean_curve(run_ids, key="reward"):
 def curves_figure(groups, title, path, ylabel="Return (moving avg over 100 episodes)"):
     """groups: list of (label, [run_ids])."""
     fig, ax = plt.subplots(figsize=(7.2, 4.2))
+    labeled_ends = []
     for i, (label, run_ids) in enumerate(groups):
         y = smooth(mean_curve(run_ids))
         ax.plot(np.arange(len(y)), y, color=SERIES[i % len(SERIES)], label=label)
-        ax.annotate(
-            label,
-            xy=(len(y) - 1, y[-1]),
-            xytext=(4, 0),
-            textcoords="offset points",
-            color=SERIES[i % len(SERIES)],
-            fontsize=9,
-            va="center",
-        )
+        # Direct-label the line end unless it would collide with a previous
+        # label (the legend still carries identity for the skipped ones).
+        if all(abs(y[-1] - e) > 6 for e in labeled_ends):
+            labeled_ends.append(y[-1])
+            ax.annotate(
+                label,
+                xy=(len(y) - 1, y[-1]),
+                xytext=(4, 0),
+                textcoords="offset points",
+                color=SERIES[i % len(SERIES)],
+                fontsize=9,
+                va="center",
+            )
     ax.set_xlabel("Training episode")
     ax.set_ylabel(ylabel)
     ax.set_title(title)

@@ -223,7 +223,7 @@ def suite_dynaq():
                 run_one(
                     rid,
                     {"planning_steps": planning_steps, "episodes": episodes, "seed": seed},
-                    save_model=(planning_steps == 20 and seed == 0),
+                    save_model=False,
                 )
             )
     write_summary("dynaq", rows)

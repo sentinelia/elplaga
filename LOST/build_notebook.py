@@ -141,9 +141,15 @@ episodes); first the state grid at 5 actions, then the action count on the 20×2
 """)
 
 code("""
+print("--- state grids and action counts, base hyperparameters (5 actions unless noted) ---")
 show_csv("results/discretization_summary.csv",
          cols=["run_id", "eval_mean_reward", "eval_std_reward", "eval_success_rate",
                "train_success_rate_last500", "train_seconds"])
+print()
+print("--- state grids on the 4-action set (see analysis below) ---")
+show_csv("results/discretization_a4_summary.csv",
+         cols=["run_id", "eval_mean_reward", "eval_std_reward", "eval_success_rate",
+               "eval_mean_steps", "train_seconds"])
 """)
 
 code("""
@@ -197,7 +203,13 @@ scored with the evaluation protocol above.
 """)
 
 code("""
+print("--- sweeps on the 5-action discretization ---")
 show_csv("results/hyperparams_summary.csv",
+         cols=["run_id", "eval_mean_reward", "eval_success_rate",
+               "train_success_rate_last500"])
+print()
+print("--- sweeps on the chosen 4-action discretization ---")
+show_csv("results/hyperparams_a4_summary.csv",
          cols=["run_id", "eval_mean_reward", "eval_success_rate",
                "train_success_rate_last500"])
 display(Image("results/fig3_hyperparams.png"))

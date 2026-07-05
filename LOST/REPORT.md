@@ -153,9 +153,9 @@ superb exchange at n=5, ruinous at n=50.
 
 | Model | Setting | Episodes | Eval return | Success | Train time |
 |---|---|---|---|---|---|
-| `final_qlearning.pkl` | 20×20 × 4 act, α=0.2, γ=0.99 | 10 000 | __FQ__ | __FQS__ | __FQT__ |
-| `final_dynaq_n5.pkl` | 20×20 × 5 act, n=5, α=0.1 | 1 000 | __FD__ | __FDS__ | __FDT__ |
-| `final_qlearning_5actions.pkl` | 20×20 × 5 act, α=0.5, ε-floor 0.2 | 8 000 | __FE__ | __FES__ | __FET__ |
+| `final_qlearning.pkl` | 20×20 × 4 act, α=0.2, γ=0.99 | 10 000 | **93.4 ± 0.2** | **100%** | 39 s |
+| `final_dynaq_n5.pkl` | 20×20 × 5 act, n=5, α=0.1 | 1 000 | 77.6 ± 15.8 | 99% | 35 s |
+| `final_qlearning_5actions.pkl` | 20×20 × 5 act, α=0.5, ε-floor 0.2 | 8 000 | 87.2 ± 26.8 | 98% | 56 s |
 
 (`results/final_summary.csv`, fig6.) The learned policy (fig7) is a
 velocity-organized bang-bang controller — push *with* the current velocity to
