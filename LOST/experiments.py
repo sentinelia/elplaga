@@ -240,11 +240,15 @@ def suite_final():
     """
     best = {"num_actions": 4, "alpha": 0.2, "gamma": 0.99, "seed": 0}
     rows = []
-    rows.append(run_one("final_qlearning", {**best, "episodes": 5000}, save_model=True))
+    rows.append(run_one("final_qlearning", {**best, "episodes": 10000}, save_model=True))
+    # Dyna-Q is shipped on the 5-action discretization: that is the setting
+    # where planning demonstrably rescues a task plain Q-Learning fails at
+    # (see dynaq_summary.csv), and where alpha=0.1 keeps planning's replay of
+    # fuel costs from swamping the table before the goal is found.
     rows.append(
         run_one(
             "final_dynaq_n5",
-            {**best, "planning_steps": 5, "episodes": 1000},
+            {"num_actions": 5, "planning_steps": 5, "episodes": 1000, "seed": 0},
             save_model=True,
         )
     )

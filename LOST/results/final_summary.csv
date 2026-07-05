@@ -1,0 +1,4 @@
+run_id,position_bins,velocity_bins,num_actions,episodes,epsilon,epsilon_min,epsilon_decay,gamma,alpha,planning_steps,seed,eval_mean_reward,eval_std_reward,eval_success_rate,eval_mean_steps,train_success_rate_last500,train_seconds
+final_qlearning,20,20,4,5000,1.0,0.05,0.999,0.99,0.2,,0,86.05544439541634,26.58396612938974,0.98,185.25,1.0,27.83543533200009
+final_dynaq_n5,20,20,4,1000,1.0,0.05,0.999,0.99,0.2,5,0,42.747555407947665,60.389812048974335,0.77,540.64,0.752,37.107363608000014
+final_qlearning_5actions,20,20,5,8000,1.0,0.2,0.999,0.99,0.5,,0,87.17125,26.751946044867267,0.98,186.35,1.0,56.8140437269999

@@ -214,15 +214,15 @@ def fig_dynaq():
 
 def fig_final():
     rows = read_summary("final")
-    fig, axes = plt.subplots(1, 2, figsize=(10.5, 4.0))
-    for ax, r, color in zip(axes, rows, SERIES):
+    fig, axes = plt.subplots(1, len(rows), figsize=(3.6 * len(rows), 3.8))
+    for ax, r, color in zip(np.atleast_1d(axes), rows, SERIES):
         h = read_history(r["run_id"])
         y = smooth(h["reward"])
         ax.plot(np.arange(len(y)), y, color=color)
-        s = smooth(h["success"].astype(float))
         ax.set_title(
-            f"{r['run_id']} — eval {float(r['eval_mean_reward']):.1f} "
-            f"({float(r['eval_success_rate']) * 100:.0f}% success)"
+            f"{r['run_id']}\neval {float(r['eval_mean_reward']):.1f} "
+            f"({float(r['eval_success_rate']) * 100:.0f}% success)",
+            fontsize=9,
         )
         ax.set_xlabel("Training episode")
         ax.set_ylabel("Return (moving avg)")

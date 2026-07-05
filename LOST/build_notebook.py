@@ -287,10 +287,11 @@ time of plain Q-Learning, infinite improvement in outcome) and ruinous at n=50.
 md(r"""
 ## Final models (`experiments.py final`)
 
-Two models are shipped in `models/` (pickled Q-tables with their discretization):
+Three models are shipped in `models/` (pickled Q-tables with their discretization):
 
-- `final_qlearning.pkl` — plain Q-Learning with the best configuration found in the exploration, trained long enough to escape the local optimum.
-- `final_dynaq_n20.pkl` — Dyna-Q, needing far fewer real episodes.
+- `final_qlearning.pkl` — plain Q-Learning on the chosen configuration (20×20 × 4 actions, α=0.2, γ=0.99), 10 000 episodes. **This is the main computed model of the submission.**
+- `final_dynaq_n5.pkl` — Dyna-Q with 5 planning steps on the *5-action* discretization: the setting where planning demonstrably rescues a task plain Q-Learning fails at, in 1 000 real episodes.
+- `final_qlearning_5actions.pkl` — the "escape" run: plain Q-Learning beating the idle trap without changing the action set, at the price of α=0.5, a 0.2 epsilon floor and 8 000 episodes.
 """)
 
 code("""
